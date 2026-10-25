@@ -87,7 +87,7 @@
             <label class="field field-title">Task name<input name="title" maxlength="255" required placeholder="e.g. Biology lab report"></label>
             <label class="field">Subject<input name="subject" maxlength="150" required placeholder="e.g. Biology"></label>
             <label class="field">Due date<input name="due_date" type="date" required></label>
-            <label class="field">Estimated hours<input name="estimated_hours" type="number" min="0.01" step="0.25" required placeholder="2.5"></label>
+            <label class="field">Estimated hours<input name="estimated_hours" type="number" min="0" step="0.25" required placeholder="2.5"></label>
             <label class="field">Priority<select name="priority"><option value="1">Low</option><option value="2" selected>Medium</option><option value="3">High</option></select></label>
           </div>
           <div class="form-actions">
@@ -107,7 +107,7 @@
           </div>
           <form id="schedule-form" class="capacity-form">
             <label class="field">Daily study availability
-              <span class="input-with-suffix"><input id="daily-limit" type="number" min="0.01" step="0.25" required value="3"><span>hours</span></span>
+              <span class="input-with-suffix"><input id="daily-limit" type="number" min="0" step="0.25" required value="3"><span>hours</span></span>
             </label>
             <button class="button button-primary" type="submit">Generate plan <span aria-hidden="true">↗</span></button>
           </form>

@@ -477,13 +477,11 @@ def normalize_task_payload(data):
 
     try:
         estimated_hours = float(data.get("estimated_hours", 0))
-        if not math.isfinite(estimated_hours) or estimated_hours <= 0:
+        if not math.isfinite(estimated_hours) or estimated_hours < 0:
             raise ValueError
         estimated_hours = round(estimated_hours, 2)
-        if estimated_hours <= 0:
-            raise ValueError
     except (TypeError, ValueError):
-        return None, "Estimated hours must be a number greater than 0."
+        return None, "Estimated hours must be a number greater than or equal to 0."
 
     try:
         priority = int(data.get("priority", 2))
@@ -680,10 +678,10 @@ def api_generate_schedule():
     data = request.get_json(silent=True) or {}
     try:
         daily_limit = round(float(data.get("daily_limit", 0)), 2)
-        if not math.isfinite(daily_limit) or daily_limit <= 0:
+        if not math.isfinite(daily_limit) or daily_limit < 0:
             raise ValueError
     except (TypeError, ValueError):
-        return jsonify(error="Daily study limit must be a number greater than 0."), 400
+        return jsonify(error="Daily study limit must be a number greater than or equal to 0."), 400
 
     build_schedule(daily_limit)
     return jsonify(load_schedule_data())
