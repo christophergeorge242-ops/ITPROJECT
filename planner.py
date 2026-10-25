@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 import sqlite3
 
@@ -79,6 +79,7 @@ def add_task():
             (title, subject_id, date.fromisoformat(due_date).isoformat(), estimated_hours, priority),
         )
         task_id = cursor.lastrowid
+        connection.execute("DELETE FROM schedule_entries")
         connection.commit()
     finally:
         connection.close()
@@ -111,6 +112,131 @@ def list_tasks():
             f"due {task['due_date']} | {task['estimated_hours']:g} hours | "
             f"{priority_name} priority"
         )
+
+
+def generate_schedule():
+    while True:
+        try:
+            daily_limit = round(float(input("Maximum study hours per day: ").strip()), 2)
+            if daily_limit > 0:
+                break
+        except ValueError:
+            pass
+        print("Enter a number greater than 0 (up to two decimal places).")
+
+    today = date.today()
+    connection = connect_to_database()
+    try:
+        tasks = connection.execute(
+            """SELECT id, title, due_date, estimated_hours, priority
+               FROM tasks
+               WHERE completed = 0
+               ORDER BY due_date, priority DESC, id"""
+        ).fetchall()
+
+        # Replace the previous plan each time the user generates a schedule.
+        connection.execute("DELETE FROM schedule_entries")
+        connection.execute(
+            """INSERT INTO planner_settings (id, daily_study_limit)
+               VALUES (1, ?)
+               ON CONFLICT(id) DO UPDATE SET daily_study_limit = excluded.daily_study_limit""",
+            (daily_limit,),
+        )
+
+        hours_by_day = {}
+        task_summaries = []
+
+        for task in tasks:
+            remaining = round(float(task["estimated_hours"]), 2)
+            due_date = date.fromisoformat(task["due_date"])
+            study_day = due_date - timedelta(days=1)
+
+            # Spread work across the days before the deadline, working back
+            # from the day before it and respecting the daily study limit.
+            while study_day >= today and remaining > 0:
+                days_left = (study_day - today).days + 1
+                target_for_day = remaining / days_left
+                free_hours = round(daily_limit - hours_by_day.get(study_day, 0), 2)
+                planned_hours = round(min(remaining, target_for_day, free_hours), 2)
+
+                if planned_hours > 0:
+                    connection.execute(
+                        """INSERT INTO schedule_entries
+                           (task_id, study_date, planned_hours)
+                           VALUES (?, ?, ?)""",
+                        (task["id"], study_day.isoformat(), planned_hours),
+                    )
+                    hours_by_day[study_day] = round(
+                        hours_by_day.get(study_day, 0) + planned_hours, 2
+                    )
+                    remaining = round(remaining - planned_hours, 2)
+
+                study_day -= timedelta(days=1)
+
+            task_summaries.append((task, remaining))
+
+        connection.commit()
+    finally:
+        connection.close()
+
+    if not tasks:
+        print("No unfinished tasks to schedule.")
+        return
+
+    print(f"\nSchedule generated with a {daily_limit:g}-hour daily limit.")
+    print("All calendar days are treated as available; deadlines are not study days.")
+    for task, unscheduled_hours in task_summaries:
+        planned = round(float(task["estimated_hours"]) - unscheduled_hours, 2)
+        print(
+            f"Task #{task['id']} ({task['title']}): "
+            f"{planned:g}/{task['estimated_hours']:g} hours scheduled"
+        )
+        if unscheduled_hours > 0:
+            print(
+                f"  Could not fit {unscheduled_hours:g} hours before "
+                f"the {task['due_date']} deadline."
+            )
+
+
+def view_schedule():
+    connection = connect_to_database()
+    try:
+        settings = connection.execute(
+            "SELECT daily_study_limit FROM planner_settings WHERE id = 1"
+        ).fetchone()
+        entries = connection.execute(
+            """SELECT schedule_entries.study_date,
+                      schedule_entries.planned_hours,
+                      tasks.id AS task_id, tasks.title,
+                      subjects.name AS subject
+               FROM schedule_entries
+               JOIN tasks ON tasks.id = schedule_entries.task_id
+               JOIN subjects ON subjects.id = tasks.subject_id
+               ORDER BY schedule_entries.study_date, tasks.id"""
+        ).fetchall()
+    finally:
+        connection.close()
+
+    if not settings:
+        print("No schedule yet. Choose 'Generate a schedule' first.")
+        return
+    if not entries:
+        print("The saved schedule has no study sessions. Generate it again after changing tasks.")
+        return
+
+    print(f"\nStudy schedule (daily limit: {settings['daily_study_limit']:g} hours):")
+    entries_by_day = {}
+    for entry in entries:
+        entries_by_day.setdefault(entry["study_date"], []).append(entry)
+
+    for study_day, day_entries in entries_by_day.items():
+        day_total = round(sum(entry["planned_hours"] for entry in day_entries), 2)
+        print(f"\n{study_day} — {day_total:g} hours")
+        for entry in day_entries:
+            print(
+                f"  {entry['planned_hours']:g}h — Task #{entry['task_id']}: "
+                f"{entry['title']} ({entry['subject']})"
+            )
 
 
 def get_task(task_id):
@@ -205,6 +331,7 @@ def edit_task():
                WHERE id = ?""",
             (title, subject_id, due_date, estimated_hours, priority, task["id"]),
         )
+        connection.execute("DELETE FROM schedule_entries")
         connection.commit()
     finally:
         connection.close()
@@ -222,6 +349,7 @@ def remove_task():
 
     connection = connect_to_database()
     try:
+        connection.execute("DELETE FROM schedule_entries")
         connection.execute("DELETE FROM tasks WHERE id = ?", (task["id"],))
         connection.commit()
     finally:
@@ -232,10 +360,13 @@ def remove_task():
 
 def main():
     initialize_database()
-    print("Smart Study Planner — Step 2: manage tasks in SQLite")
+    print("Smart Study Planner — Steps 2 and 3: manage tasks and plan study time")
 
     while True:
-        print("\n1. Add a task\n2. List tasks\n3. Edit a task\n4. Remove a task\n5. Exit")
+        print(
+            "\n1. Add a task\n2. List tasks\n3. Generate a schedule\n"
+            "4. View the schedule\n5. Edit a task\n6. Remove a task\n7. Exit"
+        )
         choice = input("Choose an option: ").strip()
 
         if choice == "1":
@@ -243,14 +374,18 @@ def main():
         elif choice == "2":
             list_tasks()
         elif choice == "3":
-            edit_task()
+            generate_schedule()
         elif choice == "4":
-            remove_task()
+            view_schedule()
         elif choice == "5":
+            edit_task()
+        elif choice == "6":
+            remove_task()
+        elif choice == "7":
             print("Goodbye.")
             break
         else:
-            print("Choose 1, 2, 3, 4, or 5.")
+            print("Choose a number from 1 to 7.")
 
 
 if __name__ == "__main__":

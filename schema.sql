@@ -22,3 +22,20 @@ CREATE TABLE IF NOT EXISTS tasks (
 
 CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date);
 CREATE INDEX IF NOT EXISTS idx_tasks_subject_id ON tasks(subject_id);
+
+CREATE TABLE IF NOT EXISTS planner_settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    daily_study_limit REAL NOT NULL CHECK (daily_study_limit > 0)
+);
+
+CREATE TABLE IF NOT EXISTS schedule_entries (
+    id INTEGER PRIMARY KEY,
+    task_id INTEGER NOT NULL,
+    study_date TEXT NOT NULL, -- ISO date: YYYY-MM-DD
+    planned_hours REAL NOT NULL CHECK (planned_hours > 0),
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+    UNIQUE (task_id, study_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_schedule_entries_study_date
+    ON schedule_entries(study_date);

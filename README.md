@@ -18,11 +18,11 @@ The first version keeps each task simple: a title, subject, due date, estimated 
 - **Subject:** a course or topic, such as Biology.
 - **Task:** a piece of work for one subject, with a deadline and estimated effort.
 - **Priority:** an integer from 1 (low) to 3 (high).
-- **Study plan:** later, generated schedule entries that connect a task to a date and number of planned hours.
+- **Study plan:** generated schedule entries that connect a task to a date and number of planned hours.
 
-The initial database schema is in [`schema.sql`](schema.sql). It creates subjects and tasks; generated schedule entries come in a later step. [`planner.py`](planner.py) provides a menu to add, list, edit, and remove tasks.
+The database schema is in [`schema.sql`](schema.sql). It creates subjects, tasks, a daily study limit setting, and schedule entries. [`planner.py`](planner.py) provides a menu to add, list, edit, remove, and schedule tasks.
 
-### Run step 1
+### Run the app
 
 Install Python 3 if it is not already installed. SQLite is included with Python, so no database server or extra package is needed.
 
@@ -32,10 +32,10 @@ Then start the app from this project folder:
 python planner.py
 ```
 
-Choose **1** to add a task, **2** to list tasks, **3** to edit a task, or **4** to remove one. During editing, press Enter to keep a field's current value. Removal asks for confirmation. The program creates `study_planner.db` in this folder and keeps the tasks there after it exits.
+Choose **1** to add a task, **2** to list tasks, **3** to generate a schedule, **4** to view it, **5** to edit a task, **6** to remove one, or **7** to exit. Schedule generation asks for the maximum study hours per day. During editing, press Enter to keep a field's current value. Removal asks for confirmation. The program creates `study_planner.db` in this folder and keeps tasks and schedules there after it exits.
 
 ## Scheduling idea
 
-For a task due on a future date, the planner will look at the available study days before that date and distribute the estimated hours across them. It will then total hours across all tasks for each day. If a day's total is above the student's daily study limit, that day is a workload conflict.
+The first scheduler treats every calendar day from today through the day before a deadline as available. It orders tasks by deadline and then priority, and spreads each task's estimated hours across that date range while staying under the daily study limit. The due date itself is reserved for submission. If there is not enough capacity, it reports the hours it could not schedule. Adding, editing, or removing a task clears the old schedule, so generate it again after changing tasks.
 
 This first scheduling rule is intentionally basic. Priority-aware ordering and subject balancing are later improvements, after the data and schedule are working.
