@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#173b37">
+  <title>Study Planner</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+  <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="#overview" aria-label="Study Planner overview">
+        <span class="brand-mark">S</span>
+        <span class="brand-name">Study Planner</span>
+      </a>
+
+      <p class="nav-caption">WORKSPACE</p>
+      <nav class="side-nav" aria-label="Main navigation">
+        <button class="nav-link is-active" data-view="overview">
+          <span class="nav-symbol">⌂</span><span>Overview</span>
+        </button>
+        <button class="nav-link" data-view="tasks">
+          <span class="nav-symbol">≡</span><span>Tasks</span>
+        </button>
+        <button class="nav-link" data-view="schedule">
+          <span class="nav-symbol">▦</span><span>Study plan</span>
+        </button>
+        <button class="nav-link" data-view="workload">
+          <span class="nav-symbol">⌁</span><span>Workload</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-bottom">
+        <span class="local-indicator"></span>
+        <span>Saved on this device</span>
+      </div>
+    </aside>
+
+    <main class="main-area">
+      <header class="topbar">
+        <time id="today-label"></time>
+      </header>
+
+      <section class="page-view" id="view-overview">
+        <div class="page-heading">
+          <div>
+            <h1>Overview</h1>
+          </div>
+          <button class="button button-primary" data-go="tasks" data-open-form="true">Add a task <span aria-hidden="true">＋</span></button>
+        </div>
+
+        <div class="stat-strip" aria-label="Planner summary">
+          <div class="stat-item"><span>Open tasks</span><strong id="stat-task-count">—</strong></div>
+          <div class="stat-item"><span>Due in 7 days</span><strong id="stat-due-soon">—</strong></div>
+          <div class="stat-item"><span>Planned this week</span><strong><span id="stat-hours">—</span><small> h</small></strong></div>
+        </div>
+
+        <div class="overview-columns">
+          <section class="content-section">
+            <div class="section-heading">
+              <h2>Upcoming deadlines</h2>
+              <button class="text-link" data-go="tasks">All tasks <span aria-hidden="true">→</span></button>
+            </div>
+            <div id="upcoming-list" class="simple-list"></div>
+          </section>
+          <section class="content-section next-session-section">
+            <p class="eyebrow">NEXT STUDY SESSION</p>
+            <div id="next-session"></div>
+            <button class="button button-secondary" data-go="schedule">Open study plan <span aria-hidden="true">→</span></button>
+          </section>
+        </div>
+      </section>
+
+      <section class="page-view is-hidden" id="view-tasks">
+        <div class="page-heading">
+          <div>
+            <h1>Tasks</h1>
+          </div>
+          <button class="button button-primary" id="show-task-form">Add a task <span aria-hidden="true">＋</span></button>
+        </div>
+
+        <form id="task-form" class="editor-surface is-hidden">
+          <div class="editor-heading">
+            <h2 id="task-form-heading">New task</h2>
+            <button class="icon-button" type="button" id="close-task-form" aria-label="Close form">×</button>
+          </div>
+          <input type="hidden" name="task_id">
+          <div class="form-grid">
+            <label class="field field-title">Task name<input name="title" maxlength="255" required placeholder="e.g. Biology lab report"></label>
+            <label class="field">Subject<input name="subject" maxlength="150" required placeholder="e.g. Biology"></label>
+            <label class="field">Due date<input name="due_date" type="date" required></label>
+            <label class="field">Estimated hours<input name="estimated_hours" type="number" min="0.01" step="0.25" required placeholder="2.5"></label>
+            <label class="field">Priority<select name="priority"><option value="1">Low</option><option value="2" selected>Medium</option><option value="3">High</option></select></label>
+          </div>
+          <div class="form-actions">
+            <button class="button button-primary" type="submit" id="save-task-button">Save task</button>
+            <button class="text-link" type="button" id="cancel-task-form">Cancel</button>
+          </div>
+        </form>
+
+        <div class="list-toolbar"><span id="task-count-label">0 tasks</span><span>Sorted by deadline</span></div>
+        <div class="task-table" id="task-list"></div>
+      </section>
+
+      <section class="page-view is-hidden" id="view-schedule">
+        <div class="page-heading">
+          <div>
+            <h1>Study plan</h1>
+          </div>
+          <form id="schedule-form" class="capacity-form">
+            <label class="field">Daily study limit
+              <span class="input-with-suffix"><input id="daily-limit" type="number" min="0.01" step="0.25" required value="3"><span>hours</span></span>
+            </label>
+            <button class="button button-primary" type="submit">Generate plan <span aria-hidden="true">↗</span></button>
+          </form>
+        </div>
+        <p class="quiet-note">Every calendar day before a deadline is available for study. The due date is left free for submission.</p>
+        <div id="schedule-notice" class="notice is-hidden" role="status"></div>
+        <div id="schedule-list" class="schedule-list"></div>
+      </section>
+
+      <section class="page-view is-hidden" id="view-workload">
+        <div class="page-heading">
+          <div>
+            <p class="eyebrow">CAPACITY CHECK</p>
+            <h1>Workload</h1>
+          </div>
+          <button class="button button-secondary" data-go="schedule">Adjust study plan <span aria-hidden="true">→</span></button>
+        </div>
+        <p class="quiet-note">Daily totals include every subject in your study plan.</p>
+        <div id="workload-summary" class="workload-summary"></div>
+        <div id="workload-list" class="workload-list"></div>
+      </section>
+
+      <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    </main>
+  </div>
+</body>
+</html>
