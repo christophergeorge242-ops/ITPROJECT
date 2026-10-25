@@ -239,6 +239,48 @@ def view_schedule():
             )
 
 
+def analyze_workload():
+    connection = connect_to_database()
+    try:
+        settings = connection.execute(
+            "SELECT daily_study_limit FROM planner_settings WHERE id = 1"
+        ).fetchone()
+        daily_totals = connection.execute(
+            """SELECT study_date, SUM(planned_hours) AS total_hours
+               FROM schedule_entries
+               GROUP BY study_date
+               ORDER BY study_date"""
+        ).fetchall()
+    finally:
+        connection.close()
+
+    if not settings:
+        print("No schedule yet. Generate a schedule before analyzing workload.")
+        return
+    if not daily_totals:
+        print("No scheduled study hours to analyze.")
+        return
+
+    daily_limit = settings["daily_study_limit"]
+    overloaded_days = []
+
+    print(f"\nWorkload analysis (daily capacity: {daily_limit:g} hours):")
+    for day in daily_totals:
+        total_hours = round(day["total_hours"], 2)
+        if total_hours > daily_limit:
+            excess_hours = round(total_hours - daily_limit, 2)
+            overloaded_days.append(day["study_date"])
+            status = f"OVER CAPACITY by {excess_hours:g}h"
+        else:
+            status = "Within capacity"
+        print(f"{day['study_date']}: {total_hours:g}h / {daily_limit:g}h — {status}")
+
+    if overloaded_days:
+        print(f"Found {len(overloaded_days)} overloaded day(s).")
+    else:
+        print("No days exceed the daily study capacity.")
+
+
 def get_task(task_id):
     connection = connect_to_database()
     try:
@@ -360,12 +402,13 @@ def remove_task():
 
 def main():
     initialize_database()
-    print("Smart Study Planner — Steps 2 and 3: manage tasks and plan study time")
+    print("Smart Study Planner — Steps 2–4: manage tasks, plan, and analyze workload")
 
     while True:
         print(
             "\n1. Add a task\n2. List tasks\n3. Generate a schedule\n"
-            "4. View the schedule\n5. Edit a task\n6. Remove a task\n7. Exit"
+            "4. View the schedule\n5. Analyze workload\n"
+            "6. Edit a task\n7. Remove a task\n8. Exit"
         )
         choice = input("Choose an option: ").strip()
 
@@ -378,14 +421,16 @@ def main():
         elif choice == "4":
             view_schedule()
         elif choice == "5":
-            edit_task()
+            analyze_workload()
         elif choice == "6":
-            remove_task()
+            edit_task()
         elif choice == "7":
+            remove_task()
+        elif choice == "8":
             print("Goodbye.")
             break
         else:
-            print("Choose a number from 1 to 7.")
+            print("Choose a number from 1 to 8.")
 
 
 if __name__ == "__main__":
