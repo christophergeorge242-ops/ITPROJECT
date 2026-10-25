@@ -1,11 +1,16 @@
 from datetime import date, timedelta
+import math
 from pathlib import Path
 import sqlite3
+import sys
+
+from flask import Flask, jsonify, render_template, request
 
 
 APP_DIR = Path(__file__).resolve().parent
 DATABASE_PATH = APP_DIR / "study_planner.db"
 SCHEMA_PATH = APP_DIR / "schema.sql"
+app = Flask(__name__)
 
 
 def connect_to_database():
@@ -13,6 +18,11 @@ def connect_to_database():
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     return connection
+
+
+def invalidate_schedule(connection):
+    connection.execute("DELETE FROM schedule_entries")
+    connection.execute("DELETE FROM planner_settings WHERE id = 1")
 
 
 def initialize_database():
@@ -79,7 +89,7 @@ def add_task():
             (title, subject_id, date.fromisoformat(due_date).isoformat(), estimated_hours, priority),
         )
         task_id = cursor.lastrowid
-        connection.execute("DELETE FROM schedule_entries")
+        invalidate_schedule(connection)
         connection.commit()
     finally:
         connection.close()
@@ -124,6 +134,27 @@ def generate_schedule():
             pass
         print("Enter a number greater than 0 (up to two decimal places).")
 
+    summary = build_schedule(daily_limit)
+
+    if not summary:
+        print("No unfinished tasks to schedule.")
+        return
+
+    print(f"\nSchedule generated with a {daily_limit:g}-hour daily limit.")
+    print("All calendar days are treated as available; deadlines are not study days.")
+    for task in summary:
+        print(
+            f"Task #{task['id']} ({task['title']}): "
+            f"{task['planned_hours']:g}/{task['estimated_hours']:g} hours scheduled"
+        )
+        if task["unscheduled_hours"] > 0:
+            print(
+                f"  Could not fit {task['unscheduled_hours']:g} hours before "
+                f"the {task['due_date']} deadline."
+            )
+
+
+def build_schedule(daily_limit):
     today = date.today()
     connection = connect_to_database()
     try:
@@ -135,7 +166,7 @@ def generate_schedule():
         ).fetchall()
 
         # Replace the previous plan each time the user generates a schedule.
-        connection.execute("DELETE FROM schedule_entries")
+        invalidate_schedule(connection)
         connection.execute(
             """INSERT INTO planner_settings (id, daily_study_limit)
                VALUES (1, ?)
@@ -173,29 +204,24 @@ def generate_schedule():
 
                 study_day -= timedelta(days=1)
 
-            task_summaries.append((task, remaining))
+        task_summaries.append(
+            {
+                "id": task["id"],
+                "title": task["title"],
+                "due_date": task["due_date"],
+                "estimated_hours": round(float(task["estimated_hours"]), 2),
+                "planned_hours": round(
+                    float(task["estimated_hours"]) - remaining, 2
+                ),
+                "unscheduled_hours": remaining,
+            }
+        )
 
         connection.commit()
     finally:
         connection.close()
 
-    if not tasks:
-        print("No unfinished tasks to schedule.")
-        return
-
-    print(f"\nSchedule generated with a {daily_limit:g}-hour daily limit.")
-    print("All calendar days are treated as available; deadlines are not study days.")
-    for task, unscheduled_hours in task_summaries:
-        planned = round(float(task["estimated_hours"]) - unscheduled_hours, 2)
-        print(
-            f"Task #{task['id']} ({task['title']}): "
-            f"{planned:g}/{task['estimated_hours']:g} hours scheduled"
-        )
-        if unscheduled_hours > 0:
-            print(
-                f"  Could not fit {unscheduled_hours:g} hours before "
-                f"the {task['due_date']} deadline."
-            )
+    return task_summaries
 
 
 def view_schedule():
@@ -373,7 +399,7 @@ def edit_task():
                WHERE id = ?""",
             (title, subject_id, due_date, estimated_hours, priority, task["id"]),
         )
-        connection.execute("DELETE FROM schedule_entries")
+        invalidate_schedule(connection)
         connection.commit()
     finally:
         connection.close()
@@ -391,13 +417,257 @@ def remove_task():
 
     connection = connect_to_database()
     try:
-        connection.execute("DELETE FROM schedule_entries")
+        invalidate_schedule(connection)
         connection.execute("DELETE FROM tasks WHERE id = ?", (task["id"],))
         connection.commit()
     finally:
         connection.close()
 
     print(f"Removed task #{task['id']}.")
+
+
+def normalize_task_payload(data):
+    title = str(data.get("title", "")).strip()
+    subject = str(data.get("subject", "")).strip()
+    due_date_text = str(data.get("due_date", "")).strip()
+
+    if not title or len(title) > 255:
+        return None, "Enter a task title up to 255 characters."
+    if not subject or len(subject) > 150:
+        return None, "Enter a subject up to 150 characters."
+
+    try:
+        parsed_due_date = date.fromisoformat(due_date_text)
+        if parsed_due_date.isoformat() != due_date_text:
+            raise ValueError
+    except ValueError:
+        return None, "Enter a valid due date in YYYY-MM-DD format."
+
+    try:
+        estimated_hours = float(data.get("estimated_hours", 0))
+        if not math.isfinite(estimated_hours) or estimated_hours <= 0:
+            raise ValueError
+        estimated_hours = round(estimated_hours, 2)
+        if estimated_hours <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        return None, "Estimated hours must be a number greater than 0."
+
+    try:
+        priority = int(data.get("priority", 2))
+        if priority not in (1, 2, 3):
+            raise ValueError
+    except (TypeError, ValueError):
+        return None, "Priority must be 1 (low), 2 (medium), or 3 (high)."
+
+    return {
+        "title": title,
+        "subject": subject,
+        "due_date": due_date_text,
+        "estimated_hours": estimated_hours,
+        "priority": priority,
+    }, None
+
+
+def save_subject(connection, subject):
+    connection.execute(
+        "INSERT INTO subjects (name) VALUES (?) ON CONFLICT(name) DO NOTHING",
+        (subject,),
+    )
+    return connection.execute(
+        "SELECT id FROM subjects WHERE name = ?", (subject,)
+    ).fetchone()["id"]
+
+
+@app.get("/")
+def home_page():
+    return render_template("index.html")
+
+
+@app.get("/api/tasks")
+def api_list_tasks():
+    connection = connect_to_database()
+    try:
+        tasks = connection.execute(
+            """SELECT tasks.id, tasks.title, subjects.name AS subject,
+                      tasks.due_date, tasks.estimated_hours,
+                      tasks.priority, tasks.completed
+               FROM tasks
+               JOIN subjects ON subjects.id = tasks.subject_id
+               ORDER BY tasks.due_date, tasks.priority DESC, tasks.id"""
+        ).fetchall()
+        return jsonify([dict(task) for task in tasks])
+    finally:
+        connection.close()
+
+
+@app.post("/api/tasks")
+def api_add_task():
+    task, error = normalize_task_payload(request.get_json(silent=True) or {})
+    if error:
+        return jsonify(error=error), 400
+
+    connection = connect_to_database()
+    try:
+        subject_id = save_subject(connection, task["subject"])
+        cursor = connection.execute(
+            """INSERT INTO tasks
+               (title, subject_id, due_date, estimated_hours, priority)
+               VALUES (?, ?, ?, ?, ?)""",
+            (
+                task["title"], subject_id, task["due_date"],
+                task["estimated_hours"], task["priority"],
+            ),
+        )
+        task_id = cursor.lastrowid
+        invalidate_schedule(connection)
+        connection.commit()
+    finally:
+        connection.close()
+
+    return jsonify(get_task(task_id)), 201
+
+
+@app.put("/api/tasks/<int:task_id>")
+def api_edit_task(task_id):
+    task, error = normalize_task_payload(request.get_json(silent=True) or {})
+    if error:
+        return jsonify(error=error), 400
+    if not get_task(task_id):
+        return jsonify(error="Task not found."), 404
+
+    connection = connect_to_database()
+    try:
+        subject_id = save_subject(connection, task["subject"])
+        connection.execute(
+            """UPDATE tasks
+               SET title = ?, subject_id = ?, due_date = ?,
+                   estimated_hours = ?, priority = ?
+               WHERE id = ?""",
+            (
+                task["title"], subject_id, task["due_date"],
+                task["estimated_hours"], task["priority"], task_id,
+            ),
+        )
+        invalidate_schedule(connection)
+        connection.commit()
+    finally:
+        connection.close()
+
+    return jsonify(get_task(task_id))
+
+
+@app.delete("/api/tasks/<int:task_id>")
+def api_remove_task(task_id):
+    connection = connect_to_database()
+    try:
+        cursor = connection.execute("SELECT id FROM tasks WHERE id = ?", (task_id,))
+        if not cursor.fetchone():
+            return jsonify(error="Task not found."), 404
+        invalidate_schedule(connection)
+        connection.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        connection.commit()
+    finally:
+        connection.close()
+    return jsonify(message="Task removed.")
+
+
+def load_schedule_data():
+    connection = connect_to_database()
+    try:
+        settings = connection.execute(
+            "SELECT daily_study_limit FROM planner_settings WHERE id = 1"
+        ).fetchone()
+        entries = connection.execute(
+            """SELECT schedule_entries.study_date,
+                      schedule_entries.planned_hours,
+                      tasks.id AS task_id, tasks.title,
+                      subjects.name AS subject
+               FROM schedule_entries
+               JOIN tasks ON tasks.id = schedule_entries.task_id
+               JOIN subjects ON subjects.id = tasks.subject_id
+               ORDER BY schedule_entries.study_date, tasks.id"""
+        ).fetchall()
+        tasks = connection.execute(
+            """SELECT tasks.id, tasks.title, tasks.due_date,
+                      tasks.estimated_hours,
+                      COALESCE(SUM(schedule_entries.planned_hours), 0) AS scheduled_hours
+               FROM tasks
+               LEFT JOIN schedule_entries ON schedule_entries.task_id = tasks.id
+               WHERE tasks.completed = 0
+               GROUP BY tasks.id
+               ORDER BY tasks.due_date, tasks.id"""
+        ).fetchall()
+    finally:
+        connection.close()
+
+    days = {}
+    for entry in entries:
+        study_day = days.setdefault(
+            entry["study_date"], {"date": entry["study_date"], "total_hours": 0, "sessions": []}
+        )
+        study_day["total_hours"] = round(
+            study_day["total_hours"] + entry["planned_hours"], 2
+        )
+        study_day["sessions"].append(
+            {
+                "task_id": entry["task_id"],
+                "title": entry["title"],
+                "subject": entry["subject"],
+                "hours": entry["planned_hours"],
+            }
+        )
+
+    unscheduled = []
+    for task in tasks:
+        remaining = round(float(task["estimated_hours"]) - task["scheduled_hours"], 2)
+        if remaining > 0:
+            unscheduled.append(
+                {
+                    "id": task["id"],
+                    "title": task["title"],
+                    "due_date": task["due_date"],
+                    "hours": remaining,
+                }
+            )
+
+    return {
+        "daily_limit": settings["daily_study_limit"] if settings else None,
+        "days": list(days.values()),
+        "unscheduled": unscheduled,
+    }
+
+
+@app.get("/api/schedule")
+def api_get_schedule():
+    return jsonify(load_schedule_data())
+
+
+@app.post("/api/schedule")
+def api_generate_schedule():
+    data = request.get_json(silent=True) or {}
+    try:
+        daily_limit = round(float(data.get("daily_limit", 0)), 2)
+        if not math.isfinite(daily_limit) or daily_limit <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        return jsonify(error="Daily study limit must be a number greater than 0."), 400
+
+    build_schedule(daily_limit)
+    return jsonify(load_schedule_data())
+
+
+@app.get("/api/workload")
+def api_workload():
+    schedule = load_schedule_data()
+    daily_limit = schedule["daily_limit"]
+    for day in schedule["days"]:
+        day["over_capacity"] = daily_limit is not None and day["total_hours"] > daily_limit
+        day["excess_hours"] = (
+            round(day["total_hours"] - daily_limit, 2)
+            if day["over_capacity"] else 0
+        )
+    return jsonify(schedule)
 
 
 def main():
@@ -433,5 +703,15 @@ def main():
             print("Choose a number from 1 to 8.")
 
 
+def run_web_app():
+    initialize_database()
+    print("Open the planner at http://127.0.0.1:5000")
+    app.run(host="127.0.0.1", port=5000, debug=False)
+
+
 if __name__ == "__main__":
-    main()
+    if "--cli" in sys.argv:
+        initialize_database()
+        main()
+    else:
+        run_web_app()
