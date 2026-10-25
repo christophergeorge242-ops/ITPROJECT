@@ -4,16 +4,20 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#173b37">
-  <title>Study Planner</title>
+  <title>procantinator</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
   <script src="{{ url_for('static', filename='app.js') }}" defer></script>
 </head>
 <body>
   <div class="app-shell">
     <aside class="sidebar">
-      <a class="brand" href="#overview" aria-label="Study Planner overview">
-        <span class="brand-mark">S</span>
-        <span class="brand-name">Study Planner</span>
+      <a class="brand" href="#overview" aria-label="procantinator overview">
+        <svg class="brand-logo" viewBox="0 0 100 100" role="img" aria-label="Procantinator logo">
+          <path d="M20 76V50a30 30 0 1 1 30 30" fill="none" stroke="#b7ff69" stroke-width="5" stroke-linecap="butt"/>
+          <path d="M29 70V50a21 21 0 1 1 21 21" fill="none" stroke="#70d84a" stroke-width="5" stroke-linecap="butt"/>
+          <path d="M38 64V50a12 12 0 1 1 12 12" fill="none" stroke="#00bb68" stroke-width="5" stroke-linecap="butt"/>
+        </svg>
+        <span class="brand-name">procantinator</span>
       </a>
 
       <p class="nav-caption">WORKSPACE</p>
@@ -32,17 +36,9 @@
         </button>
       </nav>
 
-      <div class="sidebar-bottom">
-        <span class="local-indicator"></span>
-        <span>Saved on this device</span>
-      </div>
     </aside>
 
     <main class="main-area">
-      <header class="topbar">
-        <time id="today-label"></time>
-      </header>
-
       <section class="page-view" id="view-overview">
         <div class="page-heading">
           <div>

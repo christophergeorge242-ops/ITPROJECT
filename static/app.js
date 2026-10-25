@@ -298,9 +298,6 @@ byId("schedule-form").addEventListener("submit", async (event) => {
   }
 });
 
-byId("today-label").textContent = new Intl.DateTimeFormat(undefined, {
-  weekday: "short", month: "long", day: "numeric"
-}).format(new Date());
 const initialView = ["overview", "tasks", "schedule", "workload"].includes(location.hash.slice(1))
   ? location.hash.slice(1) : "overview";
 showView(initialView);
