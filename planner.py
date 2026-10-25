@@ -173,7 +173,7 @@ def build_schedule(daily_limit):
             )
         )
 
-        # Replace the previous plan each time the user generates a schedule.
+    
         invalidate_schedule(connection)
         connection.execute(
             """INSERT INTO planner_settings (id, daily_study_limit)
