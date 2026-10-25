@@ -1,0 +1,4 @@
+__pycache__/
+*.py[cod]
+study_planner.db
+ITPROJECT/
