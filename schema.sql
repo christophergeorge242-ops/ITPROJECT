@@ -33,6 +33,8 @@ CREATE TABLE IF NOT EXISTS schedule_entries (
     task_id INTEGER NOT NULL,
     study_date TEXT NOT NULL, -- ISO date: YYYY-MM-DD
     planned_hours REAL NOT NULL CHECK (planned_hours > 0),
+    completed INTEGER NOT NULL DEFAULT 0 CHECK (completed IN (0, 1)),
+    missed INTEGER NOT NULL DEFAULT 0 CHECK (missed IN (0, 1)),
     FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
     UNIQUE (task_id, study_date)
 );

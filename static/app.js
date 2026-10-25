@@ -22,7 +22,16 @@ async function api(url, options = {}) {
     ...options,
     headers: { "Content-Type": "application/json", ...(options.headers || {}) }
   });
-  const data = await response.json();
+  const responseText = await response.text();
+  let data;
+  try {
+    data = responseText ? JSON.parse(responseText) : {};
+  } catch {
+    if (url === "/api/schedule/session" && response.status === 404) {
+      throw new Error("This page is connected to an older planner server. Stop it with Ctrl+C, start ITPROJECT\\planner.py from the project folder, then hard-refresh this page.");
+    }
+    throw new Error(`The planner server returned an unexpected response (HTTP ${response.status}).`);
+  }
   if (!response.ok) throw new Error(data.error || "Something went wrong.");
   return data;
 }
@@ -172,8 +181,35 @@ function renderSchedule(data) {
           <span class="session-hours">${formatHours(session.hours)}h</span>
           <span class="session-title">${escapeHtml(session.title)}</span>
           <span class="session-subject">${escapeHtml(session.subject)}</span>
+          ${session.completed
+            ? '<span class="session-state">Completed</span>'
+            : `<div class="session-actions">
+                <button class="task-action" data-session-action="completed" data-task-id="${session.task_id}" data-date="${day.date}">Done</button>
+                <button class="task-action" data-session-action="missed" data-task-id="${session.task_id}" data-date="${day.date}">Missed</button>
+              </div>`}
         </div>`).join("")}</div>
     </section>`).join("");
+
+  document.querySelectorAll("[data-session-action]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      try {
+        await api("/api/schedule/session", {
+          method: "POST",
+          body: JSON.stringify({
+            task_id: Number(button.dataset.taskId),
+            date: button.dataset.date,
+            action: button.dataset.sessionAction
+          })
+        });
+        notify(button.dataset.sessionAction === "completed"
+          ? "Session completed; remaining hours replanned."
+          : "Missed session moved into the remaining plan.");
+        await loadAllViews();
+      } catch (error) {
+        notify(error.message, true);
+      }
+    });
+  });
 }
 
 async function loadWorkload() {

@@ -1,5 +1,6 @@
 from datetime import date, timedelta
 import math
+import os
 from pathlib import Path
 import sqlite3
 import sys
@@ -20,16 +21,22 @@ def connect_to_database():
     return connection
 
 
-def invalidate_schedule(connection):
-    connection.execute("DELETE FROM schedule_entries")
-    connection.execute("DELETE FROM planner_settings WHERE id = 1")
-
-
 def initialize_database():
     schema = SCHEMA_PATH.read_text(encoding="utf-8")
     connection = connect_to_database()
     try:
         connection.executescript(schema)
+        # Upgrade databases created before session completion was tracked.
+        columns = {row["name"] for row in connection.execute("PRAGMA table_info(schedule_entries)")}
+        if "completed" not in columns:
+            connection.execute(
+                "ALTER TABLE schedule_entries ADD COLUMN completed INTEGER NOT NULL DEFAULT 0 CHECK (completed IN (0, 1))"
+            )
+        if "missed" not in columns:
+            connection.execute(
+                "ALTER TABLE schedule_entries ADD COLUMN missed INTEGER NOT NULL DEFAULT 0 CHECK (missed IN (0, 1))"
+            )
+        connection.commit()
     finally:
         connection.close()
 
@@ -89,11 +96,11 @@ def add_task():
             (title, subject_id, date.fromisoformat(due_date).isoformat(), estimated_hours, priority),
         )
         task_id = cursor.lastrowid
-        invalidate_schedule(connection)
         connection.commit()
     finally:
         connection.close()
 
+    replan_if_configured()
     print(f"Saved task #{task_id}: {title}")
 
 
@@ -174,7 +181,19 @@ def build_schedule(daily_limit):
         )
 
     
-        invalidate_schedule(connection)
+        # Keep finished sessions fixed. Only unfinished sessions are moved.
+        connection.execute(
+            "DELETE FROM schedule_entries WHERE completed = 0 AND missed = 0"
+        )
+        fixed_entries = connection.execute(
+            """SELECT schedule_entries.task_id, schedule_entries.study_date,
+                      schedule_entries.planned_hours, tasks.subject_id
+               FROM schedule_entries JOIN tasks ON tasks.id = schedule_entries.task_id
+               WHERE schedule_entries.completed = 1"""
+        ).fetchall()
+        missed_entries = connection.execute(
+            "SELECT task_id, study_date FROM schedule_entries WHERE missed = 1"
+        ).fetchall()
         connection.execute(
             """INSERT INTO planner_settings (id, daily_study_limit)
                VALUES (1, ?)
@@ -184,15 +203,37 @@ def build_schedule(daily_limit):
 
         hours_by_day = {}
         subject_hours_by_day = {}
+        completed_by_task = {}
+        completed_days_by_task = {}
+        missed_days_by_task = {}
+        for entry in fixed_entries:
+            day = date.fromisoformat(entry["study_date"])
+            hours_by_day[day] = round(hours_by_day.get(day, 0) + entry["planned_hours"], 2)
+            subject_key = (day, entry["subject_id"])
+            subject_hours_by_day[subject_key] = round(
+                subject_hours_by_day.get(subject_key, 0) + entry["planned_hours"], 2
+            )
+            completed_by_task[entry["task_id"]] = round(
+                completed_by_task.get(entry["task_id"], 0) + entry["planned_hours"], 2
+            )
+            completed_days_by_task.setdefault(entry["task_id"], set()).add(day)
+        for entry in missed_entries:
+            missed_days_by_task.setdefault(entry["task_id"], set()).add(
+                date.fromisoformat(entry["study_date"])
+            )
         task_summaries = []
 
         for task in tasks:
-            remaining = round(float(task["estimated_hours"]), 2)
+            remaining = max(0, round(float(task["estimated_hours"]) - completed_by_task.get(task["id"], 0), 2))
             due_date = date.fromisoformat(task["due_date"])
             available_days = []
             study_day = today
             while study_day < due_date:
-                available_days.append(study_day)
+                if (
+                    study_day not in completed_days_by_task.get(task["id"], set())
+                    and study_day not in missed_days_by_task.get(task["id"], set())
+                ):
+                    available_days.append(study_day)
                 study_day += timedelta(days=1)
 
             # Priority advances a task's effective deadline. Within each task,
@@ -270,6 +311,7 @@ def view_schedule():
                FROM schedule_entries
                JOIN tasks ON tasks.id = schedule_entries.task_id
                JOIN subjects ON subjects.id = tasks.subject_id
+               WHERE schedule_entries.missed = 0
                ORDER BY schedule_entries.study_date, tasks.id"""
         ).fetchall()
     finally:
@@ -431,11 +473,11 @@ def edit_task():
                WHERE id = ?""",
             (title, subject_id, due_date, estimated_hours, priority, task["id"]),
         )
-        invalidate_schedule(connection)
         connection.commit()
     finally:
         connection.close()
 
+    replan_if_configured()
     print(f"Updated task #{task['id']}.")
 
 
@@ -449,12 +491,12 @@ def remove_task():
 
     connection = connect_to_database()
     try:
-        invalidate_schedule(connection)
         connection.execute("DELETE FROM tasks WHERE id = ?", (task["id"],))
         connection.commit()
     finally:
         connection.close()
 
+    replan_if_configured()
     print(f"Removed task #{task['id']}.")
 
 
@@ -509,6 +551,19 @@ def save_subject(connection, subject):
     ).fetchone()["id"]
 
 
+def replan_if_configured():
+    connection = connect_to_database()
+    try:
+        settings = connection.execute(
+            "SELECT daily_study_limit FROM planner_settings WHERE id = 1"
+        ).fetchone()
+    finally:
+        connection.close()
+    if settings:
+        return build_schedule(settings["daily_study_limit"])
+    return None
+
+
 @app.get("/")
 def home_page():
     return render_template("index.html")
@@ -550,11 +605,11 @@ def api_add_task():
             ),
         )
         task_id = cursor.lastrowid
-        invalidate_schedule(connection)
         connection.commit()
     finally:
         connection.close()
 
+    replan_if_configured()
     return jsonify(get_task(task_id)), 201
 
 
@@ -579,11 +634,11 @@ def api_edit_task(task_id):
                 task["estimated_hours"], task["priority"], task_id,
             ),
         )
-        invalidate_schedule(connection)
         connection.commit()
     finally:
         connection.close()
 
+    replan_if_configured()
     return jsonify(get_task(task_id))
 
 
@@ -594,11 +649,11 @@ def api_remove_task(task_id):
         cursor = connection.execute("SELECT id FROM tasks WHERE id = ?", (task_id,))
         if not cursor.fetchone():
             return jsonify(error="Task not found."), 404
-        invalidate_schedule(connection)
         connection.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
         connection.commit()
     finally:
         connection.close()
+    replan_if_configured()
     return jsonify(message="Task removed.")
 
 
@@ -611,17 +666,21 @@ def load_schedule_data():
         entries = connection.execute(
             """SELECT schedule_entries.study_date,
                       schedule_entries.planned_hours,
+                      schedule_entries.completed AS session_completed,
                       tasks.id AS task_id, tasks.title,
                       subjects.name AS subject
                FROM schedule_entries
                JOIN tasks ON tasks.id = schedule_entries.task_id
                JOIN subjects ON subjects.id = tasks.subject_id
+               WHERE schedule_entries.missed = 0
                ORDER BY schedule_entries.study_date, tasks.id"""
         ).fetchall()
         tasks = connection.execute(
             """SELECT tasks.id, tasks.title, tasks.due_date,
                       tasks.estimated_hours,
-                      COALESCE(SUM(schedule_entries.planned_hours), 0) AS scheduled_hours
+                      COALESCE(SUM(CASE WHEN schedule_entries.missed = 0
+                                        THEN schedule_entries.planned_hours ELSE 0 END), 0)
+                          AS scheduled_hours
                FROM tasks
                LEFT JOIN schedule_entries ON schedule_entries.task_id = tasks.id
                WHERE tasks.completed = 0
@@ -645,6 +704,7 @@ def load_schedule_data():
                 "title": entry["title"],
                 "subject": entry["subject"],
                 "hours": entry["planned_hours"],
+                "completed": bool(entry["session_completed"]),
             }
         )
 
@@ -670,6 +730,8 @@ def load_schedule_data():
 
 @app.get("/api/schedule")
 def api_get_schedule():
+    # Past unfinished sessions count as missed and are moved forward on refresh.
+    replan_if_configured()
     return jsonify(load_schedule_data())
 
 
@@ -678,12 +740,60 @@ def api_generate_schedule():
     data = request.get_json(silent=True) or {}
     try:
         daily_limit = round(float(data.get("daily_limit", 0)), 2)
-        if not math.isfinite(daily_limit) or daily_limit < 0:
+        if not math.isfinite(daily_limit) or daily_limit <= 0:
             raise ValueError
     except (TypeError, ValueError):
-        return jsonify(error="Daily study limit must be a number greater than or equal to 0."), 400
+        return jsonify(error="Daily study limit must be greater than 0."), 400
 
     build_schedule(daily_limit)
+    return jsonify(load_schedule_data())
+
+
+@app.post("/api/schedule/session")
+def api_update_session():
+    data = request.get_json(silent=True) or {}
+    try:
+        task_id = int(data.get("task_id"))
+        study_date = date.fromisoformat(str(data.get("date", "")))
+        if study_date.isoformat() != data.get("date"):
+            raise ValueError
+    except (TypeError, ValueError):
+        return jsonify(error="Choose a valid study session."), 400
+    action = data.get("action")
+    if action not in ("completed", "missed"):
+        return jsonify(error="Session action must be completed or missed."), 400
+
+    connection = connect_to_database()
+    try:
+        row = connection.execute(
+            "SELECT completed, missed FROM schedule_entries WHERE task_id = ? AND study_date = ?",
+            (task_id, study_date.isoformat()),
+        ).fetchone()
+        if not row:
+            return jsonify(error="Study session not found."), 404
+        if row["completed"]:
+            return jsonify(error="Completed work is preserved and cannot be rescheduled."), 409
+        if row["missed"]:
+            return jsonify(error="This session was already marked missed."), 409
+        if action == "completed":
+            connection.execute(
+                "UPDATE schedule_entries SET completed = 1 WHERE task_id = ? AND study_date = ?",
+                (task_id, study_date.isoformat()),
+            )
+        else:
+            connection.execute(
+                "UPDATE schedule_entries SET missed = 1 WHERE task_id = ? AND study_date = ?",
+                (task_id, study_date.isoformat()),
+            )
+        setting = connection.execute(
+            "SELECT daily_study_limit FROM planner_settings WHERE id = 1"
+        ).fetchone()
+        connection.commit()
+    finally:
+        connection.close()
+
+    if setting:
+        build_schedule(setting["daily_study_limit"])
     return jsonify(load_schedule_data())
 
 
@@ -735,8 +845,9 @@ def main():
 
 def run_web_app():
     initialize_database()
-    print("Open the planner at http://127.0.0.1:5000")
-    app.run(host="127.0.0.1", port=5000, debug=False)
+    port = int(os.environ.get("STUDY_PLANNER_PORT", "5000"))
+    print(f"Open the planner at http://127.0.0.1:{port}")
+    app.run(host="127.0.0.1", port=port, debug=False)
 
 
 if __name__ == "__main__":
