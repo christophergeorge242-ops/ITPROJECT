@@ -159,11 +159,19 @@ def build_schedule(daily_limit):
     connection = connect_to_database()
     try:
         tasks = connection.execute(
-            """SELECT id, title, due_date, estimated_hours, priority
+            """SELECT id, title, subject_id, due_date, estimated_hours, priority
                FROM tasks
-               WHERE completed = 0
-               ORDER BY due_date, priority DESC, id"""
+               WHERE completed = 0"""
         ).fetchall()
+        tasks.sort(
+            key=lambda task: (
+                date.fromisoformat(task["due_date"])
+                - timedelta(days=task["priority"] - 1),
+                date.fromisoformat(task["due_date"]),
+                -task["priority"],
+                task["id"],
+            )
+        )
 
         # Replace the previous plan each time the user generates a schedule.
         invalidate_schedule(connection)
@@ -175,47 +183,71 @@ def build_schedule(daily_limit):
         )
 
         hours_by_day = {}
+        subject_hours_by_day = {}
         task_summaries = []
 
         for task in tasks:
             remaining = round(float(task["estimated_hours"]), 2)
             due_date = date.fromisoformat(task["due_date"])
-            study_day = due_date - timedelta(days=1)
+            available_days = []
+            study_day = today
+            while study_day < due_date:
+                available_days.append(study_day)
+                study_day += timedelta(days=1)
 
-            # Spread work across the days before the deadline, working back
-            # from the day before it and respecting the daily study limit.
-            while study_day >= today and remaining > 0:
-                days_left = (study_day - today).days + 1
-                target_for_day = remaining / days_left
+            # Priority advances a task's effective deadline. Within each task,
+            # prefer dates with less of its subject, then lighter days.
+            available_days.sort(
+                key=lambda day: (
+                    subject_hours_by_day.get((day, task["subject_id"]), 0),
+                    hours_by_day.get(day, 0),
+                    day,
+                )
+            )
+            for study_day in available_days:
+                if remaining <= 0:
+                    break
                 free_hours = round(daily_limit - hours_by_day.get(study_day, 0), 2)
+                if free_hours <= 0:
+                    continue
+                free_days = sum(
+                    1 for candidate in available_days
+                    if hours_by_day.get(candidate, 0) < daily_limit
+                )
+                target_for_day = remaining / max(free_days, 1)
                 planned_hours = round(min(remaining, target_for_day, free_hours), 2)
+                if planned_hours <= 0:
+                    planned_hours = round(min(remaining, free_hours), 2)
+                if planned_hours <= 0:
+                    continue
 
-                if planned_hours > 0:
-                    connection.execute(
-                        """INSERT INTO schedule_entries
-                           (task_id, study_date, planned_hours)
-                           VALUES (?, ?, ?)""",
-                        (task["id"], study_day.isoformat(), planned_hours),
-                    )
-                    hours_by_day[study_day] = round(
-                        hours_by_day.get(study_day, 0) + planned_hours, 2
-                    )
-                    remaining = round(remaining - planned_hours, 2)
+                connection.execute(
+                    """INSERT INTO schedule_entries
+                       (task_id, study_date, planned_hours)
+                       VALUES (?, ?, ?)""",
+                    (task["id"], study_day.isoformat(), planned_hours),
+                )
+                hours_by_day[study_day] = round(
+                    hours_by_day.get(study_day, 0) + planned_hours, 2
+                )
+                subject_key = (study_day, task["subject_id"])
+                subject_hours_by_day[subject_key] = round(
+                    subject_hours_by_day.get(subject_key, 0) + planned_hours, 2
+                )
+                remaining = round(remaining - planned_hours, 2)
 
-                study_day -= timedelta(days=1)
-
-        task_summaries.append(
-            {
-                "id": task["id"],
-                "title": task["title"],
-                "due_date": task["due_date"],
-                "estimated_hours": round(float(task["estimated_hours"]), 2),
-                "planned_hours": round(
-                    float(task["estimated_hours"]) - remaining, 2
-                ),
-                "unscheduled_hours": remaining,
-            }
-        )
+            task_summaries.append(
+                {
+                    "id": task["id"],
+                    "title": task["title"],
+                    "due_date": task["due_date"],
+                    "estimated_hours": round(float(task["estimated_hours"]), 2),
+                    "planned_hours": round(
+                        float(task["estimated_hours"]) - remaining, 2
+                    ),
+                    "unscheduled_hours": remaining,
+                }
+            )
 
         connection.commit()
     finally:

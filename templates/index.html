@@ -106,13 +106,13 @@
             <h1>Study plan</h1>
           </div>
           <form id="schedule-form" class="capacity-form">
-            <label class="field">Daily study limit
+            <label class="field">Daily study availability
               <span class="input-with-suffix"><input id="daily-limit" type="number" min="0.01" step="0.25" required value="3"><span>hours</span></span>
             </label>
             <button class="button button-primary" type="submit">Generate plan <span aria-hidden="true">↗</span></button>
           </form>
         </div>
-        <p class="quiet-note">Every calendar day before a deadline is available for study. The due date is left free for submission.</p>
+        <p class="quiet-note">Set your daily study availability, then generate a plan. High priority tasks are scheduled earlier, with hours spread across lighter days and subjects. The due date is left free for submission.</p>
         <div id="schedule-notice" class="notice is-hidden" role="status"></div>
         <div id="schedule-list" class="schedule-list"></div>
       </section>

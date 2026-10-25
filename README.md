@@ -40,6 +40,4 @@ The previous terminal menu is still available with `python planner.py --cli`.
 
 ## Scheduling idea
 
-The first scheduler treats every calendar day from today through the day before a deadline as available. It orders tasks by deadline and then priority, and spreads each task's estimated hours across that date range while staying under the daily study limit. The due date itself is reserved for submission. If there is not enough capacity, it reports the hours it could not schedule. Workload analysis totals the saved schedule per day and compares it with the daily limit. Adding, editing, or removing a task clears the old schedule, so generate it again after changing tasks.
-
-This first scheduling rule is intentionally basic. Priority-aware ordering and subject balancing are later improvements, after the data and schedule are working.
+The scheduler treats every calendar day from today through the day before a deadline as available. It uses priority to bring high priority tasks forward, then spreads task hours across dates with lighter daily workloads and less time already assigned to the same subject. The daily study availability setting limits each day's total. Changing that setting and generating the plan again replaces the previous plan using the new capacity. The due date itself is reserved for submission. If there is not enough capacity, the app reports the hours it could not schedule. Workload analysis totals the saved schedule per day and compares it with the current availability.
