@@ -1,6 +1,6 @@
 # Smart Study Planner and Workload Analyzer
 
-A small app that helps a student organize assignments and study tasks by deadline, estimated effort, and priority. It will create a schedule and point out overloaded days or competing deadlines. Python stores task data in a local SQLite database.
+A small app that helps a student organize assignments and study tasks by deadline, estimated effort, and priority. It creates a schedule and points out overloaded days or competing deadlines. Use Streamlit with Supabase Postgres for deployment, or run the existing Flask app locally with SQLite.
 
 ## Build it step by step
 
@@ -20,7 +20,23 @@ The first version keeps each task simple: a title, subject, due date, estimated 
 - **Priority:** an integer from 1 (low) to 3 (high).
 - **Study plan:** generated schedule entries that connect a task to a date and number of planned hours.
 
-The database schema is in [`schema.sql`](schema.sql). It creates subjects, tasks, a daily study limit setting, and schedule entries. [`planner.py`](planner.py) runs the interactive app and its local API. The HTML, styles, and browser interactions live in `templates/` and `static/`.
+The local SQLite schema is in [`schema.sql`](schema.sql); [`schema.postgres.sql`](schema.postgres.sql) is used automatically for Supabase Postgres. [`planner.py`](planner.py) contains the scheduling logic and local Flask app; [`streamlit_app.py`](streamlit_app.py) is the cloud UI.
+
+### Deploy with Supabase and Streamlit Community Cloud
+
+1. Create a Supabase project. In **Project Settings → Database**, copy the connection string for the **Session pooler** and replace its password placeholder. Use the URI form (`postgresql://...`) and keep the password private.
+2. Push this `ITPROJECT` repository to GitHub.
+3. In Streamlit Community Cloud, create an app from that repository, set the app file to `streamlit_app.py`, and choose the repository's `ITPROJECT` folder as the app root if the project is nested in a larger repository.
+4. In the app's **Settings → Secrets**, add:
+
+   ```toml
+   DATABASE_URL = "postgresql://postgres.[project-ref]:[YOUR-PASSWORD]@[pooler-host]:5432/postgres?sslmode=require"
+   ```
+
+   Use the exact Session pooler URI shown by Supabase for your project; host, username, and port vary. `DATABASE_URL` is a server-side secret. Do not commit it.
+5. Deploy. On first startup, the app creates the required tables and indexes in the Supabase database.
+
+The Streamlit entry point is `streamlit_app.py`. Dependencies are in `requirements.txt`. For local Streamlit development, set `DATABASE_URL` in your environment (or `.streamlit/secrets.toml`, which must remain untracked) and run `streamlit run streamlit_app.py`. Without `DATABASE_URL`, the existing Flask app continues to use local SQLite.
 
 ### Run the app
 

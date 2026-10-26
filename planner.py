@@ -15,6 +15,13 @@ app = Flask(__name__)
 
 
 def connect_to_database():
+    database_url = os.environ.get("DATABASE_URL")
+    if database_url:
+        import psycopg
+        from psycopg.rows import dict_row
+
+        connection = psycopg.connect(database_url, row_factory=dict_row)
+        return PostgresConnection(connection)
     connection = sqlite3.connect(DATABASE_PATH)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
@@ -22,6 +29,15 @@ def connect_to_database():
 
 
 def initialize_database():
+    if os.environ.get("DATABASE_URL"):
+        connection = connect_to_database()
+        try:
+            schema = (APP_DIR / "schema.postgres.sql").read_text(encoding="utf-8")
+            connection.raw.execute(schema)
+            connection.commit()
+        finally:
+            connection.close()
+        return
     schema = SCHEMA_PATH.read_text(encoding="utf-8")
     connection = connect_to_database()
     try:
@@ -39,6 +55,22 @@ def initialize_database():
         connection.commit()
     finally:
         connection.close()
+
+
+class PostgresConnection:
+    """Small DB-API adapter so the existing planner can use SQLite or Postgres."""
+
+    def __init__(self, raw):
+        self.raw = raw
+
+    def execute(self, sql, params=()):
+        return self.raw.execute(sql.replace("?", "%s"), params)
+
+    def commit(self):
+        self.raw.commit()
+
+    def close(self):
+        self.raw.close()
 
 
 def ask_for_nonempty_text(prompt):
@@ -92,10 +124,10 @@ def add_task():
         cursor = connection.execute(
             """INSERT INTO tasks
                (title, subject_id, due_date, estimated_hours, priority)
-               VALUES (?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?) RETURNING id""",
             (title, subject_id, date.fromisoformat(due_date).isoformat(), estimated_hours, priority),
         )
-        task_id = cursor.lastrowid
+        task_id = cursor.fetchone()["id"]
         connection.commit()
     finally:
         connection.close()
@@ -603,13 +635,13 @@ def api_add_task():
         cursor = connection.execute(
             """INSERT INTO tasks
                (title, subject_id, due_date, estimated_hours, priority)
-               VALUES (?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?) RETURNING id""",
             (
                 task["title"], subject_id, task["due_date"],
                 task["estimated_hours"], task["priority"],
             ),
         )
-        task_id = cursor.lastrowid
+        task_id = cursor.fetchone()["id"]
         connection.commit()
     finally:
         connection.close()
