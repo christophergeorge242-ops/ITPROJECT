@@ -2,6 +2,7 @@ const state = { tasks: [], schedule: null };
 let toastTimer;
 
 const byId = (id) => document.getElementById(id);
+// Escape user-provided task text before placing it into generated HTML.
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
 }[char]));
@@ -12,6 +13,7 @@ const formatDate = (value, options = { month: "short", day: "numeric", year: "nu
   if (!value) return "—";
   return new Intl.DateTimeFormat(undefined, options).format(new Date(`${value}T00:00:00`));
 };
+// Build YYYY-MM-DD from local time so date-only values don't shift across time zones.
 const localDateKey = (date = new Date()) => {
   const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
   return local.toISOString().slice(0, 10);

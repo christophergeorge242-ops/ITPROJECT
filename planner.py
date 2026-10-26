@@ -26,8 +26,8 @@ def initialize_database():
     connection = connect_to_database()
     try:
         connection.executescript(schema)
-        # Upgrade databases created before session completion was tracked.
         columns = {row["name"] for row in connection.execute("PRAGMA table_info(schedule_entries)")}
+        # Add session-status fields to databases created before completion tracking existed.
         if "completed" not in columns:
             connection.execute(
                 "ALTER TABLE schedule_entries ADD COLUMN completed INTEGER NOT NULL DEFAULT 0 CHECK (completed IN (0, 1))"
@@ -162,6 +162,7 @@ def generate_schedule():
 
 
 def build_schedule(daily_limit):
+    """Rebuild unfinished sessions while preserving completed work."""
     today = date.today()
     connection = connect_to_database()
     try:
@@ -181,7 +182,7 @@ def build_schedule(daily_limit):
         )
 
     
-        # Keep finished sessions fixed. Only unfinished sessions are moved.
+        # Keep finished sessions fixed; rebuilding only unfinished rows lets the plan adapt.
         connection.execute(
             "DELETE FROM schedule_entries WHERE completed = 0 AND missed = 0"
         )
@@ -224,6 +225,8 @@ def build_schedule(daily_limit):
         task_summaries = []
 
         for task in tasks:
+            # Completed hours count toward a task, while missed dates stay unavailable
+            # so a missed session is carried forward instead of recreated on that day.
             remaining = max(0, round(float(task["estimated_hours"]) - completed_by_task.get(task["id"], 0), 2))
             due_date = date.fromisoformat(task["due_date"])
             available_days = []
@@ -236,8 +239,8 @@ def build_schedule(daily_limit):
                     available_days.append(study_day)
                 study_day += timedelta(days=1)
 
-            # Priority advances a task's effective deadline. Within each task,
-            # prefer dates with less of its subject, then lighter days.
+            # Priority advances a task's effective deadline. Among eligible dates,
+            # prefer days with less work in this subject and lower total workload.
             available_days.sort(
                 key=lambda day: (
                     subject_hours_by_day.get((day, task["subject_id"]), 0),
@@ -245,16 +248,17 @@ def build_schedule(daily_limit):
                     day,
                 )
             )
-            for study_day in available_days:
+            for day_index, study_day in enumerate(available_days):
                 if remaining <= 0:
                     break
                 free_hours = round(daily_limit - hours_by_day.get(study_day, 0), 2)
                 if free_hours <= 0:
                     continue
                 free_days = sum(
-                    1 for candidate in available_days
+                    1 for candidate in available_days[day_index:]
                     if hours_by_day.get(candidate, 0) < daily_limit
                 )
+                # Spread the remaining hours over the days still able to accept work.
                 target_for_day = remaining / max(free_days, 1)
                 planned_hours = round(min(remaining, target_for_day, free_hours), 2)
                 if planned_hours <= 0:
@@ -559,6 +563,7 @@ def replan_if_configured():
         ).fetchone()
     finally:
         connection.close()
+    # Don't create a schedule until the user has set a daily capacity.
     if settings:
         return build_schedule(settings["daily_study_limit"])
     return None
@@ -730,7 +735,7 @@ def load_schedule_data():
 
 @app.get("/api/schedule")
 def api_get_schedule():
-    # Past unfinished sessions count as missed and are moved forward on refresh.
+    # Refreshing lets the planner carry past unfinished sessions forward automatically.
     replan_if_configured()
     return jsonify(load_schedule_data())
 
