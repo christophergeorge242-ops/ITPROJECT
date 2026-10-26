@@ -1,13 +1,40 @@
 from datetime import date
 
+import altair as alt
 import streamlit as st
 
 import planner
 
 
 st.set_page_config(page_title="Smart Study Planner", page_icon="📚", layout="wide")
-st.title("📚 Smart Study Planner")
-st.caption("Organize coursework, build a study plan, and keep daily workload within capacity.")
+st.markdown(
+    """
+    <style>
+      .block-container { max-width: 1180px; padding-top: 2.3rem; padding-bottom: 4rem; }
+      h1, h2, h3 { letter-spacing: -0.035em; }
+      h1 { color: #173b37; font-weight: 650; }
+      h2 { color: #173b37; font-weight: 600; }
+      [data-testid="stSidebar"] { background: #173b37; }
+      [data-testid="stSidebar"] * { color: #eaf2ed; }
+      [data-testid="stSidebar"] [data-testid="stRadio"] label { border-radius: 7px; padding: .15rem .35rem; }
+      [data-testid="stSidebar"] [data-testid="stRadio"] label:hover { background: rgba(255,255,255,.08); }
+      .brand-lockup { display:flex; align-items:center; gap:.7rem; margin:.25rem 0 2.1rem; color:#fff; }
+      .brand-mark { display:grid; place-items:center; width:2.45rem; height:2.45rem; border-radius:9px; background:#d4e7dc; font-size:1.35rem; }
+      .brand-name { font-size:1.02rem; font-weight:700; letter-spacing:-.02em; }
+      .page-kicker { margin:0 0 .45rem; color:#4b7866; font-size:.72rem; font-weight:750; letter-spacing:.13em; text-transform:uppercase; }
+      .page-subtitle { margin-top:-.55rem; margin-bottom:1.8rem; color:#73817b; font-size:.98rem; }
+      [data-testid="stMetric"] { height:100%; padding:1.05rem 1.2rem; border:1px solid #d9e2dc; border-radius:10px; background:#fff; }
+      [data-testid="stMetricLabel"] { color:#73817b; }
+      [data-testid="stMetricValue"] { color:#173b37; font-weight:650; }
+      [data-testid="stForm"] { padding:1.25rem; border:1px solid #d9e2dc; border-radius:10px; background:#fff; }
+      [data-testid="stDataFrame"] { border:1px solid #d9e2dc; border-radius:9px; overflow:hidden; }
+      [data-testid="stExpander"] { border-color:#d9e2dc; border-radius:8px; background:rgba(255,255,255,.65); }
+      div.stButton > button[kind="primary"], button[kind="primaryFormSubmit"] { border-radius:7px; font-weight:650; }
+      @media (max-width: 720px) { .block-container { padding:1.3rem 1rem 3rem; } .brand-lockup { margin-bottom:1rem; } }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 try:
     planner.initialize_database()
@@ -88,10 +115,21 @@ def set_session(task_id, study_date, action):
 
 
 with st.sidebar:
+    st.markdown('<div class="brand-lockup"><span class="brand-mark">📚</span><span class="brand-name">Smart Study Planner</span></div>', unsafe_allow_html=True)
     page = st.radio("Navigate", ["Overview", "Tasks", "Study plan", "Workload"])
 
+page_details = {
+    "Overview": ("YOUR STUDY SPACE", "Overview", "A clear view of deadlines, study time, and what needs attention."),
+    "Tasks": ("COURSEWORK", "Tasks & deadlines", "Keep assignments organized by subject, deadline, effort, and priority."),
+    "Study plan": ("MAKE A PLAN", "Study plan", "Turn your open tasks into manageable sessions across the week."),
+    "Workload": ("DAILY CAPACITY", "Workload", "See how your planned study hours compare with your daily availability."),
+}
+kicker, heading, subtitle = page_details[page]
+st.markdown(f'<p class="page-kicker">{kicker}</p>', unsafe_allow_html=True)
+st.title(heading)
+st.markdown(f'<p class="page-subtitle">{subtitle}</p>', unsafe_allow_html=True)
+
 if page == "Tasks":
-    st.subheader("Tasks")
     with st.form("new_task", clear_on_submit=True):
         title = st.text_input("Task title")
         subject = st.text_input("Subject")
@@ -108,7 +146,14 @@ if page == "Tasks":
 
     task_rows = tasks_data()
     if task_rows:
-        st.dataframe([dict(row) for row in task_rows], use_container_width=True, hide_index=True)
+        st.dataframe(
+            [{"Task": row["title"], "Subject": row["subject"], "Due": row["due_date"],
+              "Hours": f'{row["estimated_hours"]:g} h',
+              "Priority": {1: "Low", 2: "Medium", 3: "High"}[row["priority"]],
+              "Status": "Complete" if row["completed"] else "Open"} for row in task_rows],
+            use_container_width=True,
+            hide_index=True,
+        )
         task_ids = [row["id"] for row in task_rows]
         selected = st.selectbox("Choose a task to update or remove", task_ids, format_func=lambda i: next(f"#{r['id']} · {r['title']}" for r in task_rows if r["id"] == i))
         selected_task = next(row for row in task_rows if row["id"] == selected)
@@ -129,7 +174,6 @@ if page == "Tasks":
         st.info("No tasks yet. Add one above to get started.")
 
 elif page == "Study plan":
-    st.subheader("Study plan")
     current_limit = get_daily_limit()
     with st.form("plan_settings"):
         limit = st.number_input("Daily study availability (hours)", min_value=0.25, value=float(current_limit or 3.0), step=0.25)
@@ -140,16 +184,16 @@ elif page == "Study plan":
     for day in schedule["days"]:
         with st.expander(f"{day['date']} · {day['total_hours']:.2f} hours"):
             for session in day["sessions"]:
-                col1, col2, col3 = st.columns([5, 1, 2])
+                col1, col2, col3, col4 = st.columns([5, 1, 1, 1])
                 col1.write(f"**{session['title']}** · {session['subject']}")
                 col2.write(f"{session['hours']:.2f} h")
                 if session["completed"]:
                     col3.caption("Done")
                 else:
-                    if col3.button("Mark done", key=f"done-{session['task_id']}-{day['date']}"):
+                    if col3.button("Done", key=f"done-{session['task_id']}-{day['date']}"):
                         set_session(session["task_id"], day["date"], "completed")
                         st.rerun()
-                    if col3.button("Missed", key=f"missed-{session['task_id']}-{day['date']}"):
+                    if col4.button("Missed", key=f"missed-{session['task_id']}-{day['date']}"):
                         set_session(session["task_id"], day["date"], "missed")
                         st.rerun()
     if schedule["unscheduled"]:
@@ -157,34 +201,87 @@ elif page == "Study plan":
         st.dataframe(schedule["unscheduled"], use_container_width=True, hide_index=True)
 
 elif page == "Workload":
-    st.subheader("Workload")
     schedule = planner.load_schedule_data()
     capacity = schedule["daily_limit"]
     if capacity is None:
         st.info("Set daily study availability in Study plan to analyze workload.")
     elif schedule["days"]:
-        workload = [{"Date": d["date"], "Planned hours": d["total_hours"], "Daily limit": capacity,
-                     "Over capacity": d["total_hours"] > capacity} for d in schedule["days"]]
-        st.dataframe(workload, use_container_width=True, hide_index=True)
-        st.bar_chart({d["date"]: d["total_hours"] for d in schedule["days"]})
         over = [d for d in schedule["days"] if d["total_hours"] > capacity]
+        metric_cols = st.columns(3)
+        metric_cols[0].metric("Days planned", len(schedule["days"]))
+        metric_cols[1].metric("Daily limit", f"{capacity:g} h")
+        metric_cols[2].metric("Over capacity", len(over))
+        st.write("")
+        workload = [
+            {
+                "date": d["date"],
+                "planned": round(d["total_hours"], 2),
+                "limit": capacity,
+                "status": "Over capacity" if d["total_hours"] > capacity else "Within limit",
+            }
+            for d in schedule["days"]
+        ]
+        chart = alt.Chart(alt.Data(values=workload)).mark_bar(size=22, cornerRadiusEnd=4).encode(
+            x=alt.X("planned:Q", title="Study hours", axis=alt.Axis(grid=True)),
+            y=alt.Y("date:N", title=None, sort="ascending", axis=alt.Axis(labelLimit=130)),
+            color=alt.condition(
+                alt.datum.planned > alt.datum.limit,
+                alt.value("#a95e50"),
+                alt.value("#4b7866"),
+            ),
+            tooltip=[
+                alt.Tooltip("date:N", title="Date"),
+                alt.Tooltip("planned:Q", title="Planned hours", format=".2f"),
+                alt.Tooltip("limit:Q", title="Daily limit", format=".2f"),
+                alt.Tooltip("status:N", title="Status"),
+            ],
+        ).properties(height=min(420, max(170, len(workload) * 48)))
+        limit_rule = alt.Chart(alt.Data(values=[{"limit": capacity}])).mark_rule(
+            color="#a95e50", strokeDash=[5, 4], size=2
+        ).encode(x="limit:Q")
+        st.altair_chart((chart + limit_rule).configure_view(stroke=None).configure_axis(
+            labelColor="#53645c", titleColor="#53645c", gridColor="#e4ebe6"
+        ), use_container_width=True)
+        st.subheader("Daily breakdown")
+        st.dataframe(
+            [{"Date": row["date"], "Planned hours": f'{row["planned"]:.2f} h',
+              "Daily limit": f'{row["limit"]:g} h', "Status": row["status"]} for row in workload],
+            use_container_width=True,
+            hide_index=True,
+        )
         if over:
             st.warning(f"{len(over)} day(s) exceed your {capacity:g}-hour daily limit.")
         else:
-            st.success("All scheduled days are within your daily limit.")
+            st.success("Your planned hours fit within the daily limit.")
     else:
         st.info("No scheduled sessions yet. Generate a plan first.")
 
 else:
     task_rows = tasks_data()
     schedule = planner.load_schedule_data()
+    open_tasks = [row for row in task_rows if not row["completed"]]
+    today = date.today().isoformat()
+    week_end = date.today().toordinal() + 7
+    due_this_week = sum(
+        today <= row["due_date"] <= date.fromordinal(week_end).isoformat() for row in open_tasks
+    )
+    week_sessions = sum(
+        today <= day["date"] <= date.fromordinal(week_end).isoformat()
+        for day in schedule["days"]
+    )
     a, b, c = st.columns(3)
-    a.metric("Open tasks", sum(not row["completed"] for row in task_rows))
-    b.metric("Upcoming sessions", len(schedule["days"]))
-    c.metric("Daily limit", f"{schedule['daily_limit']:g} h" if schedule["daily_limit"] else "Not set")
+    a.metric("Open tasks", len(open_tasks))
+    b.metric("Due this week", due_this_week)
+    c.metric("Study days planned", week_sessions)
     st.subheader("Upcoming deadlines")
     upcoming = [dict(row) for row in task_rows if row["due_date"] >= date.today().isoformat() and not row["completed"]]
     if upcoming:
-        st.dataframe(upcoming, use_container_width=True, hide_index=True)
+        st.dataframe(
+            [{"Task": row["title"], "Subject": row["subject"], "Due": row["due_date"],
+              "Hours": f'{row["estimated_hours"]:g} h',
+              "Priority": {1: "Low", 2: "Medium", 3: "High"}[row["priority"]]} for row in upcoming],
+            use_container_width=True,
+            hide_index=True,
+        )
     else:
         st.info("No open upcoming tasks. Add tasks or adjust their due dates in Tasks.")
